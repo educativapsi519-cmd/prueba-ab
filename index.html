@@ -1,0 +1,1485 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seguimiento de Alumno</title>
+<link rel="manifest" href="manifest.json">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+
+body { background-color: #f8f9fa; }
+#loginScreen { display: flex; justify-content: center; align-items: center; height: 100vh; }
+.login-box { width: 100%; max-width: 350px; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 15px rgba(0,0,0,0.1); }
+.grupo-box { margin-bottom: 30px; overflow-x:auto; }
+table { width: 100%; }
+.detalle textarea { width: 100%; min-height: 60px; resize: vertical; }
+.resultado-bloque { border: 1px solid #ddd; padding: 10px; margin-bottom: 10px; border-radius: 6px; background: #fff; }
+.filtroBtn { margin: 2px; }
+@media(max-width:768px){
+    .grupo-box { font-size: 14px; }
+    .detalle div { margin-bottom: 5px; }
+    .resultado-bloque { font-size: 14px; }
+}
+/* Modal actualizar grupos */
+.modal-bg { position: fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); display:none; justify-content:center; align-items:center; z-index:9999; }
+.modal-content { background:#fff; padding:20px; border-radius:8px; max-height:80%; overflow-y:auto; width:90%; max-width:600px; }
+textarea { width:100%; height:200px; font-family: monospace; white-space: pre; }
+</style>
+</head>
+
+<header> 
+
+
+<button id="adminBtn" style="display:none" onclick="abrirAdminUsuarios()">
+Administrar usuarios
+</button>
+
+</header>
+
+
+
+<script>
+    
+    function puedeVerAlumno(alumno){
+return true
+}
+    
+</script>
+
+
+
+<body>
+
+<!-- -------- LOGIN -------- -->
+<div id="loginScreen">
+    <div class="login-box">
+        <h4 class="text-center mb-3">Acceso</h4>
+        <input type="password" id="pass" class="form-control mb-3" placeholder="Contraseña">
+        <button class="btn btn-primary w-100" onclick="login()">Entrar</button>
+        <p id="error" class="text-danger mt-2"></p>
+    </div>
+</div>
+
+<!-- -------- APP -------- -->
+<div id="app" class="container py-4" style="display:none">
+    <h1 class="text-center mb-4">Seguimiento de alumnos</h1>
+
+    <!-- Buscador -->
+    <input id="buscador" class="form-control mb-3" placeholder="Buscar alumno por nombre...">
+
+    <!-- Descarga / carga JSON -->
+    <div class="text-center mb-3">
+        <button id="descargarJson" class="btn btn-success">Descargar JSON</button>
+        <button id="cargarDatosBtn" class="btn btn-primary">Cargar JSON</button>
+        <input type="file" id="cargarJson" accept=".json" style="display:none">
+    </div>
+
+    <!-- Barra de selección de grupos -->
+    <div id="barraGrupos" class="mb-3 text-center"></div>
+
+    <!-- Filtros por columna -->
+    <div id="filtros" class="mb-3"></div>
+
+    <!-- Botones generales de filtros -->
+    <div id="filtrosGenerales" class="mb-3 text-center">
+        <button id="toggleANDBtn" class="btn btn-success btn-sm me-2">Todos los filtros</button>
+        <button id="addColGeneral" class="btn btn-dark btn-sm me-2">Añadir columna general</button>
+        <button id="delColGeneral" class="btn btn-warning btn-sm me-2">Eliminar columna general</button>
+        <button id="actualizarGruposBtn" class="btn btn-info btn-sm">Actualizar grupos</button>
+    </div>
+    
+    
+    
+    <div id="barraGrupos"></div>
+    
+    
+    
+    
+
+    <!-- Contenedores de tablas y resultados -->
+    <div id="tablaFiltros" class="mb-3"></div>
+    <div id="gruposContainer" class="mb-3"></div>
+    <div id="resultadosBusqueda"></div>
+</div>
+
+<!-- -------- MODAL ACTUALIZAR GRUPOS -------- -->
+<div id="modalActualizar" class="modal-bg">
+    <div class="modal-content">
+        <h5>Actualizar grupos</h5>
+        <div id="modalInputs" class="mb-3"></div>
+        <div class="text-end">
+            <button class="btn btn-secondary btn-sm" id="cerrarModal">Cancelar</button>
+            <button class="btn btn-primary btn-sm" id="guardarModal">Guardar</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// -------- SUPABASE --------
+const supabaseUrl = "https://wnczunyxorctpggkbisg.supabase.co";
+const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InduY3p1bnl4b3JjdHBnZ2tiaXNnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzNjY3MjIsImV4cCI6MjA4ODk0MjcyMn0.t881mX0NY7_ocflcbcD43KXOhEKdhGX56XrGBJIJmxk";
+const supabaseClient = supabase.createClient(supabaseUrl, supabaseKey);
+
+// -------- VARIABLES GLOBALES --------
+let modoEliminar = false;
+let ordenFiltros = {col:"nombre", dir:"asc"};
+const columnasBase = ["vinculoDepartamento","vinculoIJuntos","diagnosticos","historialEventos","comentarios","fortalezas","riesgos","medidas","estado_expediente"];
+let filtrosActivos = [];
+let modoAND = true;
+let grupos = {
+    "PRIMERO DE SECUNDARIA GRUPO A": { columnasExtra: [...columnasBase], alumnos: [] }
+};
+let grupoActivo = null;
+
+
+
+
+
+
+let usuarios = JSON.parse(localStorage.getItem("usuarios")) || {
+
+monitor1:{rol:"monitor"},
+psicologo1:{rol:"psicologo"},
+profesor1:{rol:"profesor"},
+padre1:{rol:"padre"},
+departamento1:{rol:"departamento"}
+
+}
+
+let usuarioActual=null
+let rolActual=null
+
+
+
+
+
+
+
+
+
+// -------- HELPERS --------
+function generarId(){ return '_' + Math.random().toString(36).substr(2, 9); }
+function hayBusquedaActiva(){ return document.getElementById("buscador").value.trim() !== ""; }
+
+// -------- SUPABASE --------
+async function guardarSupabase(){
+    try{ await supabaseClient.from("alumnos_json").upsert({id:1, datos:grupos}); }
+    catch(e){ console.log("Error guardando en Supabase", e); }
+}
+async function cargarSupabase(){
+    try{
+        const {data,error}=await supabaseClient.from("alumnos_json").select("*").eq("id",1).single();
+        if(error) throw error;
+        if(data && data.datos) grupos=data.datos;
+    }
+    catch(e){ console.log("No se pudo cargar Supabase, usando datos locales", e); }
+}
+
+// -------- LOGIN --------
+async function login(){
+
+const user = document.getElementById("pass").value.trim()
+
+if(!usuarios[user]){
+alert("Usuario no válido")
+return
+}
+
+usuarioActual=user
+rolActual=usuarios[user].rol
+
+
+if(rolActual==="departamento"){
+document.getElementById("adminBtn").style.display="inline-block"
+}
+
+
+
+document.getElementById("loginScreen").style.display="none"
+document.getElementById("app").style.display="block"
+
+await cargarSupabase()
+
+renderBarraGrupos()
+renderGrupos()
+renderFiltros()
+renderTablaFiltros()
+
+}
+
+
+const permisosColumnas={
+
+vinculoDepartamento:{
+ver:["departamento","psicologo"],
+editar:["departamento"]
+},
+
+vinculoIJuntos:{
+ver:["psicologo","departamento"],
+editar:["psicologo"]
+},
+
+diagnosticos:{
+ver:["psicologo","departamento"],
+editar:["psicologo"]
+},
+
+historialEventos:{
+ver:["psicologo","departamento","profesor"],
+editar:["psicologo","departamento"]
+},
+
+comentarios:{
+ver:["profesor","psicologo","departamento"],
+editar:["profesor","psicologo"]
+},
+
+fortalezas:{
+ver:["profesor","padre","psicologo"],
+editar:["profesor"]
+},
+
+riesgos:{
+ver:["psicologo","departamento"],
+editar:["psicologo"]
+},
+
+medidas:{
+ver:["psicologo","departamento"],
+editar:["psicologo","departamento"]
+},
+
+estado_expediente:{
+ver:["psicologo","departamento"],
+editar:["psicologo","departamento"]
+}
+
+}
+
+
+
+
+function puedeVerColumna(col){
+
+if(!permisosColumnas[col]) return true
+
+return permisosColumnas[col].ver.includes(rolActual)
+
+}
+
+function puedeEditarColumna(col){
+
+if(!permisosColumnas[col]) return true
+
+return permisosColumnas[col].editar.includes(rolActual)
+
+}
+
+
+
+function puedeVerColumna(col){
+
+if(!permisosColumnas[col]) return true
+
+return permisosColumnas[col].ver.includes(rolActual)
+
+}
+
+function puedeEditarColumna(col){
+
+if(!permisosColumnas[col]) return true
+
+return permisosColumnas[col].editar.includes(rolActual)
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// -------- RENDER BARRA DE GRUPOS --------
+function renderBarraGrupos(){
+    const cont = document.getElementById("barraGrupos");
+    cont.innerHTML = "";
+
+    for(const nombreGrupo in grupos){
+        const grupo = grupos[nombreGrupo];
+        // Solo mostrar si tiene al menos un alumno
+        if(!grupo.alumnos || grupo.alumnos.length === 0) continue;
+
+        let abrev = nombreGrupo
+            .replace("PRIMERO DE SECUNDARIA GRUPO A","1° sec")
+            .replace("SEGUNDO DE SECUNDARIA GRUPO A","2° sec")
+            .replace("TERCERO DE SECUNDARIA GRUPO A","3° sec")
+            .replace("PRIMER SEMESTRE DE PREPARATORIA GRUPO A","1° prepa")
+            .replace("SEGUNDO SEMESTRE DE PREPARATORIA GRUPO A","2° prepa")
+            .replace("TERCER SEMESTRE DE PREPARATORIA GRUPO A","3° prepa")
+            .replace("CUARTO SEMESTRE DE PREPARATORIA GRUPO A","4° prepa")
+            .replace("QUINTO SEMESTRE DE PREPARATORIA GRUPO A","5° prepa")
+            .replace("SEXTO SEMESTRE DE PREPARATORIA GRUPO A","6° prepa");
+
+        const btn = document.createElement("button");
+        btn.className = "btn btn-sm me-1 mb-1";
+        btn.innerText = abrev;
+        if(grupoActivo === nombreGrupo) btn.classList.add("btn-primary");
+        else btn.classList.add("btn-outline-secondary");
+        btn.onclick = ()=>{
+            grupoActivo = grupoActivo === nombreGrupo ? null : nombreGrupo;
+            renderGrupos();
+            renderBarraGrupos();
+        };
+        cont.appendChild(btn);
+    }
+
+}
+
+// -------- RENDER GRUPOS --------
+function renderGrupos(){
+    const cont = document.getElementById("gruposContainer");
+    // Si hay búsqueda activa o filtros activos, ocultar grupos
+    if(hayBusquedaActiva() || filtrosActivos.length>0){ 
+        cont.style.display="none"; 
+        return; 
+    }
+    cont.innerHTML="";
+
+    for(const nombreGrupo in grupos){
+        const grupo = grupos[nombreGrupo];
+
+        // Ignorar grupos sin alumnos
+        if(!grupo.alumnos || grupo.alumnos.length === 0) continue;
+
+        // Si hay un grupo activo y no es este, saltar
+        if(grupoActivo && grupoActivo!==nombreGrupo) continue;
+
+        // Crear contenedor del grupo
+        const box = document.createElement("div");
+        box.className="grupo-box";
+        box.innerHTML = `
+            <h3 class="text-center">${nombreGrupo}</h3>
+            <div class="mb-2 text-center">
+                <button class="btn btn-secondary btn-sm addAlumno">Agregar alumno</button>
+                <button class="btn btn-dark btn-sm addCol">Agregar columna</button>
+                <button class="btn btn-warning btn-sm delCol">Eliminar columna</button>
+                <button class="btn btn-danger btn-sm toggleEliminar">Eliminar alumnos</button>
+            </div>
+        `;
+
+        // Tabla de alumnos
+        const table = document.createElement("table");
+        table.className = "table table-bordered";
+        table.innerHTML = `<thead><tr><th>No</th><th>Nombre</th><th>Actividades</th><th>Fecha</th><th>Seguimiento</th><th class="btn-delete">X</th></tr></thead>`;
+        const tbody = document.createElement("tbody");
+
+        // Rellenar alumnos
+        grupo.alumnos.forEach(alumno=>{
+            
+            
+            if(!puedeVerAlumno(alumno)) return
+            
+            
+            
+            
+            
+            
+            
+            
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td contenteditable>${alumno.numerolista||""}</td>
+                <td contenteditable>${alumno.nombre||""}</td>
+                <td contenteditable>${alumno.actividades||""}</td>
+                <td contenteditable>${alumno.fecha||""}</td>
+                <td><button class="btn btn-primary btn-sm">Ver seguimiento</button></td>
+                <td class="btn-delete"><button class="btn btn-danger btn-sm">X</button></td>
+            `;
+
+            // Actualizar datos al editar
+            ["numerolista","nombre","actividades","fecha"].forEach((campo,idx)=>{
+                tr.children[idx].addEventListener("input",()=>{
+                    alumno[campo]=tr.children[idx].innerText; 
+                    guardarSupabase(); 
+                });
+            });
+
+            // Detalle de columnas extra
+            const detalle = document.createElement("tr");
+            detalle.style.display="none";
+            detalle.className="detalle";
+            let campos = "";
+            grupo.columnasExtra.forEach(col=>{
+
+    if(!puedeVerColumna(col)) return
+
+    const readonly = puedeEditarColumna(col) ? "" : "readonly"
+
+    campos+=`<div class="col-md-6 mb-2">
+        <label>${col}</label>
+        <textarea ${readonly} data-col="${col}" data-id="${alumno.id}" data-grupo="${nombreGrupo}">
+        ${alumno[col]||""}
+        </textarea>
+    </div>`;
+
+
+            });
+            detalle.innerHTML = `<td colspan="6"><div class="row">${campos}</div></td>`;
+
+            // Mostrar/ocultar detalle
+            tr.children[4].onclick = ()=>{ detalle.style.display = detalle.style.display==="none"?"table-row":"none"; };
+
+            // Eliminar alumno
+            tr.children[5].onclick = ()=>{
+                if(confirm(`¿Eliminar al alumno ${alumno.nombre}?`)){
+                    grupo.alumnos = grupo.alumnos.filter(a=>a.id!==alumno.id);
+                    renderGrupos(); renderFiltros(); renderTablaFiltros(); guardarSupabase();
+                    
+                    
+                    
+               function guardarHistorial(alumno,col,valorAnterior,valorNuevo){
+
+if(valorAnterior===valorNuevo) return
+
+if(!alumno._historial) alumno._historial={}
+
+if(!alumno._historial[col]) alumno._historial[col]=[]
+
+alumno._historial[col].push({
+
+usuario:usuarioActual,
+fecha:new Date().toISOString(),
+antes:valorAnterior
+
+})
+
+}     
+                
+                
+                
+                
+                
+                
+                
+                }
+            };
+
+            tbody.appendChild(tr); 
+            tbody.appendChild(detalle);
+        });
+
+        table.appendChild(tbody);
+        box.appendChild(table);
+        cont.appendChild(box);
+
+        // Botones de grupo
+        box.querySelector(".addAlumno").onclick = ()=>{
+            const nuevo = {id:generarId(), numerolista:"", nombre:""};
+            grupo.alumnos.push(nuevo); renderGrupos(); guardarSupabase();
+        };
+        box.querySelector(".toggleEliminar").onclick = ()=>{
+            modoEliminar=!modoEliminar; renderGrupos();
+        };
+        box.querySelector(".addCol").onclick = ()=>{
+            const nombre = prompt("Nombre columna"); 
+            if(!nombre||grupo.columnasExtra.includes(nombre)) return alert("Nombre inválido o duplicado");
+            grupo.columnasExtra.push(nombre); grupo.alumnos.forEach(a=>a[nombre]="");
+            renderGrupos(); renderFiltros(); guardarSupabase();
+        };
+        box.querySelector(".delCol").onclick = ()=>{
+            if(grupo.columnasExtra.length===0) return alert("No hay columnas");
+            const menu = grupo.columnasExtra.map((c,i)=>`${i+1} - ${c}`).join("\n");
+            let sel = prompt("Columnas:\n"+menu+"\n\nNúmero a eliminar:"); 
+            if(!sel) return;
+            const index = parseInt(sel)-1; 
+            if(index<0||index>=grupo.columnasExtra.length) return alert("Inválido");
+            const col = grupo.columnasExtra.splice(index,1)[0]; 
+            grupo.alumnos.forEach(a=>delete a[col]);
+            renderGrupos(); renderFiltros(); guardarSupabase();
+        };
+    }
+
+    // Mostrar/ocultar columna X según modoEliminar
+    document.querySelectorAll(".btn-delete").forEach(e=>{
+        e.style.display = modoEliminar?"table-cell":"none";
+    });
+}
+
+// -------- MODAL ACTUALIZAR GRUPOS --------
+// -------- MODAL ACTUALIZAR / CREAR / ELIMINAR GRUPOS --------
+const modal = document.getElementById("modalActualizar");
+const modalInputs = document.getElementById("modalInputs");
+
+document.getElementById("actualizarGruposBtn").onclick = () => {
+    modalInputs.innerHTML = "";
+
+    // Botón para crear nuevo grupo
+    const crearBtn = document.createElement("button");
+    crearBtn.className = "btn btn-success mb-3";
+    crearBtn.innerText = "Crear nuevo grupo";
+    crearBtn.onclick = () => {
+        const nombreNuevo = prompt("Nombre del nuevo grupo:");
+        if(!nombreNuevo) return;
+        if(grupos[nombreNuevo]) return alert("El grupo ya existe");
+        grupos[nombreNuevo] = { columnasExtra: [...columnasBase], alumnos: [] };
+        renderBarraGrupos();
+        renderGrupos();
+        renderFiltros();
+        renderTablaFiltros();
+        renderModalGrupos(); // actualizar modal
+    };
+    modalInputs.appendChild(crearBtn);
+
+    // Función interna para renderizar inputs de cada grupo
+    function renderModalGrupos(){
+        // Limpiamos los inputs existentes excepto el botón de crear
+        modalInputs.querySelectorAll(".grupo-modal").forEach(e=>e.remove());
+
+        for(const nombreGrupo in grupos){
+            const grupo = grupos[nombreGrupo];
+            const div = document.createElement("div");
+            div.className = "mb-3 grupo-modal border p-2 rounded";
+            
+            // Label con botón eliminar
+            div.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                    <label><strong>${nombreGrupo}</strong></label>
+                    <button class="btn btn-danger btn-sm btn-eliminar-grupo">Eliminar grupo</button>
+                </div>
+                <textarea data-grupo="${nombreGrupo}" class="form-control">${grupo.alumnos.map(a=>`${a.numerolista||""}, ${a.nombre}`).join("\n")}</textarea>
+            `;
+            
+            // Evento eliminar grupo
+            div.querySelector(".btn-eliminar-grupo").onclick = () => {
+                if(confirm(`¿Eliminar el grupo ${nombreGrupo}? Se perderán todos los alumnos.`)){
+                    delete grupos[nombreGrupo];
+                    renderBarraGrupos();
+                    renderGrupos();
+                    renderFiltros();
+                    renderTablaFiltros();
+                    renderModalGrupos();
+                }
+            };
+
+            modalInputs.appendChild(div);
+        }
+    }
+
+    renderModalGrupos();
+    modal.style.display = "flex";
+};
+
+document.getElementById("cerrarModal").onclick = ()=>{ modal.style.display="none"; };
+
+document.getElementById("guardarModal").onclick = () => {
+    // Guardar cambios de alumnos
+    modalInputs.querySelectorAll("textarea").forEach(area=>{
+        const grupoNombre = area.dataset.grupo;
+        const grupo = grupos[grupoNombre];
+        const lineas = area.value.split("\n").map(l=>l.trim()).filter(l=>l);
+        const nuevosAlumnos = [];
+        lineas.forEach(l=>{
+            const partes = l.split(",");
+            const numero = partes[0]?.trim()||"";
+            const nombre = partes.slice(1).join(",").trim();
+            if(!nombre) return;
+            const nuevo = {id:generarId(), numerolista:numero, nombre:nombre};
+            grupo.columnasExtra.forEach(col=>nuevo[col]="");
+            nuevosAlumnos.push(nuevo);
+        });
+        grupo.alumnos = nuevosAlumnos;
+    });
+
+    modal.style.display="none";
+    renderGrupos();
+    renderFiltros();
+    renderTablaFiltros();
+    guardarSupabase();
+};
+// -------- RENDER FILTROS --------
+function renderFiltros(){
+    const cont = document.getElementById("filtros");
+    cont.innerHTML=""; if(hayBusquedaActiva()){ cont.style.display="none"; return; }
+    cont.style.display="block";
+    let columnas = new Set(["actividades","fecha","estado_expediente"]);
+    for(let g in grupos) grupos[g].columnasExtra.forEach(c=>columnas.add(c));
+    columnas.forEach(col=>{
+        const btn = document.createElement("button");
+        btn.className="btn btn-sm filtroBtn me-1 mb-1";
+        btn.dataset.col=col;
+        btn.innerText=col;
+        if(filtrosActivos.includes(col)) btn.classList.add("btn-warning");
+        else btn.classList.add("btn-outline-secondary");
+        btn.onclick=function(){
+            const c=this.dataset.col;
+            if(filtrosActivos.includes(c)) filtrosActivos=filtrosActivos.filter(f=>f!==c);
+            else filtrosActivos.push(c);
+            const gruposCont = document.getElementById("gruposContainer");
+            const tablaFiltrosCont = document.getElementById("tablaFiltros");
+            if(filtrosActivos.length>0){ gruposCont.style.display="none"; tablaFiltrosCont.style.display="block"; }
+            else{ gruposCont.style.display="block"; tablaFiltrosCont.style.display="none"; }
+            renderTablaFiltros(); renderFiltros();
+        };
+        cont.appendChild(btn);
+    });
+}
+
+// -------- BOTONES GENERALES DE FILTROS --------
+document.getElementById("toggleANDBtn").onclick = () => { modoAND=!modoAND; document.getElementById("toggleANDBtn").innerText = modoAND?"Todos los filtros":"Cualquiera de los filtros"; renderTablaFiltros(); };
+document.getElementById("addColGeneral").onclick = ()=>{
+    const nombre = prompt("Nombre de la columna general:"); if(!nombre) return alert("Nombre inválido");
+    for(let g in grupos){ const grupo = grupos[g]; if(!grupo.columnasExtra.includes(nombre)){ grupo.columnasExtra.push(nombre); grupo.alumnos.forEach(a=>a[nombre]=""); } }
+    renderGrupos(); renderFiltros(); renderTablaFiltros(); guardarSupabase();
+};
+document.getElementById("delColGeneral").onclick = ()=>{
+    let todasCols = new Set(); for(let g in grupos) grupos[g].columnasExtra.forEach(c=>todasCols.add(c));
+    if(todasCols.size===0) return alert("No hay columnas para eliminar");
+    let menu = Array.from(todasCols).map((c,i)=>`${i+1} - ${c}`).join("\n");
+    let sel = prompt("Columnas:\n"+menu+"\n\nNúmero a eliminar:"); if(!sel) return;
+    let index = parseInt(sel)-1; let colAEliminar = Array.from(todasCols)[index]; if(!colAEliminar) return alert("Número inválido");
+    for(let g in grupos){ let grupo = grupos[g]; grupo.columnasExtra = grupo.columnasExtra.filter(c=>c!==colAEliminar); grupo.alumnos.forEach(a=>delete a[colAEliminar]); }
+    renderGrupos(); renderFiltros(); renderTablaFiltros(); guardarSupabase();
+};
+
+// -------- RENDER TABLA FILTROS --------
+function renderTablaFiltros(){
+    const cont = document.getElementById("tablaFiltros"); if(hayBusquedaActiva() || filtrosActivos.length===0){ cont.style.display="none"; return; }
+    let filas=[];
+    for(let g in grupos) grupos[g].alumnos.forEach(a=>{
+        let cumple = modoAND ? filtrosActivos.every(f=>a[f]) : filtrosActivos.some(f=>a[f]);
+        if(cumple) filas.push({grupo:g,...a});
+    });
+    if(filas.length===0){ cont.innerHTML="No hay resultados."; return; }
+    let html=`<table class="table table-bordered"><thead><tr><th>Grupo</th><th>No</th><th>Nombre</th>`;
+    filtrosActivos.forEach(f=>html+=`<th>${f}</th>`); html+="</tr></thead><tbody>";
+    filas.forEach(a=>{
+        html+=`<tr><td>${a.grupo}</td>
+            <td contenteditable data-id="${a.id}" data-col="numerolista">${a.numerolista||""}</td>
+            <td contenteditable data-id="${a.id}" data-col="nombre">${a.nombre||""}</td>`;
+        filtrosActivos.forEach(f=>html+=`<td contenteditable data-id="${a.id}" data-col="${f}">${a[f]||""}</td>`);
+        html+="</tr>";
+    });
+    html+="</tbody></table>";
+    cont.innerHTML=html;
+    
+    // --------- Activar ordenamiento por clic en encabezados ----------
+const table = cont.querySelector("table");
+if(table){
+    const ths = table.querySelectorAll("th");
+    ths.forEach((th, idx)=>{
+        if(th.innerText.toLowerCase().includes("ver") || th.innerText.toLowerCase().includes("x")) return; // ignorar botones
+        th.style.cursor = "pointer";
+        th.title = "Click para ordenar";
+        th.onclick = () => {
+            let tipo = "texto";
+            if(th.innerText.toLowerCase().includes("no") || th.innerText.toLowerCase().includes("cantidad")) tipo="numero";
+            if(th.innerText.toLowerCase().includes("fecha")) tipo="fecha";
+            ordenarTabla(table, idx, tipo);
+        };
+    });
+}
+    
+    
+}
+
+// -------- BUSCADOR --------
+document.getElementById("buscador").addEventListener("input",()=>{
+    const texto=document.getElementById("buscador").value.toLowerCase();
+    const gruposCont=document.getElementById("gruposContainer");
+    const tablaFiltrosCont=document.getElementById("tablaFiltros");
+    const filtrosCont=document.getElementById("filtros");
+    const resultadosCont=document.getElementById("resultadosBusqueda");
+    if(texto){
+        gruposCont.style.display="none"; tablaFiltrosCont.style.display="none"; filtrosCont.style.display="none"; document.getElementById("filtrosGenerales").style.display="none";
+        renderResultadosBusqueda(texto);
+    } else {
+        filtrosCont.style.display="block"; document.getElementById("filtrosGenerales").style.display="block";
+        if(filtrosActivos.length>0){ gruposCont.style.display="none"; tablaFiltrosCont.style.display="block"; }
+        else{ gruposCont.style.display="block"; tablaFiltrosCont.style.display="none"; }
+        resultadosCont.innerHTML=""; renderGrupos(); renderFiltros(); renderTablaFiltros();
+    }
+});
+
+function renderResultadosBusqueda(buscar){
+    const cont=document.getElementById("resultadosBusqueda"); cont.innerHTML="";
+    let todasColumnas = new Set(["actividades","fecha","estado_expediente"]); for(let g in grupos) grupos[g].columnasExtra.forEach(col=>todasColumnas.add(col));
+    let filas=[]; for(let g in grupos) grupos[g].alumnos.forEach(a=>{ if(a.nombre?.toLowerCase().includes(buscar)) filas.push({grupo:g,...a}); });
+    if(filas.length===0){ cont.innerHTML="No se encontraron resultados."; return; }
+    let html=`<div class="resultados-busqueda">`;
+    filas.forEach(a=>{
+        html+=`<div class="resultado-bloque">
+            <div><strong>Grupo:</strong> ${a.grupo}</div>
+            <div contenteditable data-id="${a.id}" data-col="numerolista"><strong>No:</strong> ${a.numerolista||""}</div>
+            <div contenteditable data-id="${a.id}" data-col="nombre"><strong>Nombre:</strong> ${a.nombre||""}</div>`;
+        todasColumnas.forEach(f=>{ let val=a[f]||""; html+=`<div contenteditable data-id="${a.id}" data-col="${f}"><strong>${f}:</strong> ${val}</div>`; });
+        html+="</div>";
+    });
+    html+="</div>"; cont.innerHTML=html;
+}
+
+// -------- DESCARGAR / CARGAR JSON --------
+// -------- DESCARGAR / CARGAR JSON --------
+
+// Descargar JSON
+document.getElementById("descargarJson").onclick = () => {
+    const blob = new Blob([JSON.stringify(grupos, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    const now = new Date();
+    const yyyy = now.getFullYear(), 
+          mm = String(now.getMonth() + 1).padStart(2, '0'), 
+          dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0'), 
+          min = String(now.getMinutes()).padStart(2, '0'), 
+          ss = String(now.getSeconds()).padStart(2, '0');
+    link.href = URL.createObjectURL(blob);
+    link.download = `alumnos_${yyyy}${mm}${dd}_${hh}${min}${ss}.json`;
+    link.click();
+};
+
+// Abrir selector de archivo
+document.getElementById("cargarDatosBtn").onclick = () => { 
+    document.getElementById("cargarJson").click(); 
+};
+
+// Cargar JSON
+document.getElementById("cargarJson").addEventListener("change", function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = function(evt) {
+        try {
+            let jsonData = JSON.parse(evt.target.result);
+
+            // Asegurar estructura correcta
+            for (const g in jsonData) {
+                const grupo = jsonData[g];
+
+                // columnasExtra
+                if (!grupo.columnasExtra) grupo.columnasExtra = [...columnasBase];
+
+                // alumnos
+                if (!grupo.alumnos) grupo.alumnos = [];
+
+                grupo.alumnos.forEach(a => {
+                    // Dar id si no tiene
+                    if (!a.id) a.id = generarId();
+
+                    // Inicializar columnasExtra en cada alumno si faltan
+                    grupo.columnasExtra.forEach(col => {
+                        if (!(col in a)) a[col] = "";
+                    });
+                });
+            }
+
+            grupos = jsonData;
+
+            renderGrupos();
+            renderFiltros();
+            renderTablaFiltros();
+            guardarSupabase();
+            alert("JSON cargado correctamente");
+
+        } catch (err) {
+            console.error("Error al cargar JSON:", err);
+            alert("El archivo JSON tiene un formato incorrecto");
+        }
+    };
+    reader.readAsText(file);
+});
+
+
+// --------- 
+function ordenarTabla(table, colIndex){
+    const tbody = table.querySelector("tbody");
+    const filas = Array.from(tbody.querySelectorAll("tr")).filter(r=>!r.classList.contains("detalle"));
+
+    // Crear objeto para recordar el orden de cada columna
+    if(!table._ordenCols) table._ordenCols = {};
+    const asc = !(table._ordenCols[colIndex] ?? false); // true=asc, false=desc
+    table._ordenCols[colIndex] = asc; // guardar estado actual
+
+    filas.sort((a,b)=>{
+        let valA = a.children[colIndex].innerText.trim();
+        let valB = b.children[colIndex].innerText.trim();
+
+        // Detectar tipo automáticamente
+        let tipo = "texto";
+        if(!isNaN(Date.parse(valA)) && !isNaN(Date.parse(valB))) tipo="fecha";
+        else if(!isNaN(parseFloat(valA)) && !isNaN(parseFloat(valB))) tipo="numero";
+
+        if(tipo==="numero"){ 
+            valA = parseFloat(valA) || 0; 
+            valB = parseFloat(valB) || 0; 
+        }
+        if(tipo==="fecha"){ 
+            valA = new Date(valA); 
+            valB = new Date(valB); 
+        }
+        if(tipo==="texto"){ 
+            valA = valA.toLowerCase();
+            valB = valB.toLowerCase();
+            if(valA < valB) return asc ? -1 : 1;
+            if(valA > valB) return asc ? 1 : -1;
+        }
+
+        return 0;
+    });
+
+    // Volver a añadir filas al tbody y mantener los detalles
+    filas.forEach(f=>{
+        tbody.appendChild(f);
+        const det = f.nextElementSibling;
+        if(det && det.classList.contains("detalle")) tbody.appendChild(det);
+    });
+}
+
+// --------- Detectar cambios en todos los campos contenteditable ---------
+document.body.addEventListener("input", function(e){
+    const target = e.target;
+    const id = target.dataset.id;
+    const col = target.dataset.col;
+    const grupoNombre = target.dataset.grupo; // algunos casos (detalle)
+
+    if(!id || !col) return;
+
+    // Buscar el alumno correspondiente
+    for(const g in grupos){
+        if(grupoNombre && g !== grupoNombre) continue; // si está en detalle, usar grupo exacto
+        const alumno = grupos[g].alumnos.find(a=>a.id===id);
+        if(alumno){
+            alumno[col] = target.innerText || target.value || "";
+            guardarSupabase();
+            break;
+        }
+    }
+});
+
+
+
+
+function abrirAdminUsuarios(){
+
+alert(
+"Usuarios disponibles:\n\n" +
+"monitor1 (monitor)\n" +
+"psicologo1 (psicologo)\n" +
+"profesor1 (profesor)\n" +
+"padre1 (padre)\n" +
+"departamento1 (departamento)"
+)
+
+}
+
+
+
+function abrirAdminUsuarios(){
+
+let lista="USUARIOS:\n\n"
+
+for(let u in usuarios){
+lista+=u+" ("+usuarios[u].rol+")\n"
+}
+
+let opcion=prompt(
+lista+
+"\n\nOpciones:\n"+
+"1 = Crear usuario\n"+
+"2 = Eliminar usuario\n"+
+"3 = Cancelar"
+)
+
+if(opcion==="1") crearUsuario()
+if(opcion==="2") eliminarUsuario()
+
+}
+
+
+
+function crearUsuario(){
+
+let nombre=prompt("Nuevo usuario:")
+
+if(!nombre) return
+
+if(usuarios[nombre]){
+alert("Ese usuario ya existe")
+return
+}
+
+let rol=prompt(
+"Rol del usuario:\n\n"+
+"monitor\n"+
+"psicologo\n"+
+"profesor\n"+
+"padre\n"+
+"departamento"
+)
+
+usuarios[nombre]={rol:rol}
+
+guardarUsuarios()
+
+alert("Usuario creado")
+
+}
+
+
+
+
+function eliminarUsuario(){
+
+let nombre=prompt("Usuario a eliminar:")
+
+if(!usuarios[nombre]){
+alert("Usuario no existe")
+return
+}
+
+delete usuarios[nombre]
+
+guardarUsuarios()
+
+alert("Usuario eliminado")
+
+}
+
+function guardarUsuarios(){
+localStorage.setItem("usuarios",JSON.stringify(usuarios))
+}
+
+
+
+
+
+function abrirAdminUsuarios(){
+
+document.getElementById("panelAdmin").style.display="block"
+
+renderUsuarios()
+
+}
+
+function cerrarPanelAdmin(){
+
+document.getElementById("panelAdmin").style.display="none"
+
+}
+
+
+function renderUsuarios(){
+
+const tbody=document.getElementById("listaUsuarios")
+
+tbody.innerHTML=""
+
+for(let nombre in usuarios){
+
+let rol=usuarios[nombre].rol
+
+let fila=document.createElement("tr")
+
+fila.innerHTML=`
+
+<td>${nombre}</td>
+<td>${rol}</td>
+<td>
+<button onclick="eliminarUsuario('${nombre}')">Eliminar</button>
+</td>
+
+`
+
+tbody.appendChild(fila)
+
+}
+
+}
+
+
+
+function crearUsuario(){
+
+let nombre=document.getElementById("nuevoUsuario").value.trim()
+
+let rol=document.getElementById("nuevoRol").value
+
+if(!nombre){
+alert("Escribe un usuario")
+return
+}
+
+if(usuarios[nombre]){
+alert("Ese usuario ya existe")
+return
+}
+
+usuarios[nombre]={rol:rol}
+
+guardarUsuarios()
+
+renderUsuarios()
+
+document.getElementById("nuevoUsuario").value=""
+
+}
+
+
+
+function eliminarUsuario(nombre){
+
+if(!confirm("Eliminar usuario?")) return
+
+delete usuarios[nombre]
+
+guardarUsuarios()
+
+renderUsuarios()
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+</script>
+
+
+
+
+
+
+
+
+
+<div id="panelAdmin" class="panel-admin">
+
+<h2>Administrar Usuarios</h2>
+
+<div class="crear-usuario">
+
+<input type="text" id="nuevoUsuario" placeholder="Nombre de usuario">
+
+<select id="nuevoRol">
+<option value="monitor">Monitor</option>
+<option value="psicologo">Psicólogo</option>
+<option value="profesor">Profesor</option>
+<option value="padre">Padre</option>
+<option value="departamento">Departamento</option>
+</select>
+
+<button onclick="crearUsuario()">Crear</button>
+
+</div>
+
+<table class="tabla-usuarios">
+
+<thead>
+<tr>
+<th>Usuario</th>
+<th>Rol</th>
+<th>Acción</th>
+</tr>
+</thead>
+
+<tbody id="listaUsuarios"></tbody>
+
+</table>
+
+<button onclick="cerrarPanelAdmin()">Cerrar</button>
+
+</div>
+
+
+<style>
+
+/* -------- BODY & BACKGROUND -------- */
+body {
+    background: linear-gradient(135deg, #e0eafc, #cfdef3);
+    font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', sans-serif;
+    color: #1f2937;
+    margin: 0;
+}
+/* -------- LOGIN -------- */
+#loginScreen {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    transition: background 0.5s;
+}
+.login-box {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    padding: 50px 35px;
+    border-radius: 20px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+    text-align: center;
+    width: 340px;
+    transition: transform 0.3s, box-shadow 0.3s;
+}
+.login-box:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 25px 50px rgba(0,0,0,0.3);
+}
+.login-box h4 {
+    font-weight: 700;
+    font-size: 1.6rem;
+    margin-bottom: 30px;
+    color: #1f2937;
+}
+#pass {
+    border-radius: 12px;
+    border: 1px solid #d1d5db;
+    padding: 12px;
+    width: 100%;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.08);
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+#pass:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 8px rgba(79,70,229,0.25);
+}
+/* -------- APP CONTAINER -------- */
+#app .container {
+    max-width: 1200px;
+}
+/* -------- TITULO Y BUSCADOR -------- */
+h1.text-center {
+    font-weight: 700;
+    font-size: 2.2rem;
+    margin-bottom: 25px;
+    color: #1f2937;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+#buscador {
+    border-radius: 15px;
+    border: 1px solid rgba(255,255,255,0.5);
+    padding: 14px 16px;
+    width: 100%;
+    max-width: 450px;
+    margin: 0 auto 25px auto;
+    background: rgba(255,255,255,0.7);
+    backdrop-filter: blur(10px);
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.08);
+    font-size: 1rem;
+    transition: all 0.3s;
+}
+#buscador:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 12px rgba(79,70,229,0.3);
+}
+
+
+
+
+
+
+
+
+
+
+/* -------- BODY & BACKGROUND -------- */
+body {
+    background: linear-gradient(135deg, #e0eafc, #cfdef3);
+    font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', sans-serif;
+    color: #1f2937;
+    margin: 0;
+}
+
+/* -------- LOGIN -------- */
+#loginScreen {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    transition: background 0.5s;
+}
+.login-box {
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(12px);
+    padding: 50px 35px;
+    border-radius: 20px;
+    box-shadow: 0 20px 40px rgba(0,0,0,0.25);
+    text-align: center;
+    width: 340px;
+    transition: transform 0.3s, box-shadow 0.3s;
+}
+.login-box:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 25px 50px rgba(0,0,0,0.3);
+}
+.login-box h4 {
+    font-weight: 700;
+    font-size: 1.6rem;
+    margin-bottom: 30px;
+    color: #1f2937;
+}
+#pass {
+    border-radius: 12px;
+    border: 1px solid #d1d5db;
+    padding: 12px;
+    width: 100%;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.08);
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+#pass:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 8px rgba(79,70,229,0.25);
+}
+
+/* -------- APP CONTAINER -------- */
+#app .container {
+    max-width: 1200px;
+}
+
+/* -------- TITULO Y BUSCADOR -------- */
+h1.text-center {
+    font-weight: 700;
+    font-size: 2.2rem;
+    margin-bottom: 25px;
+    color: #1f2937;
+    text-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+#buscador {
+    border-radius: 15px;
+    border: 1px solid rgba(255,255,255,0.5);
+    padding: 14px 16px;
+    width: 100%;
+    max-width: 450px;
+    margin: 0 auto 25px auto;
+    background: rgba(255,255,255,0.7);
+    backdrop-filter: blur(10px);
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.08);
+    font-size: 1rem;
+    transition: all 0.3s;
+}
+#buscador:focus {
+    outline: none;
+    border-color: #4f46e5;
+    box-shadow: 0 0 12px rgba(79,70,229,0.3);
+}
+
+/* -------- BOTONES -------- */
+.btn {
+    border-radius: 12px;
+    font-weight: 600;
+    padding: 10px 18px;
+    transition: all 0.3s;
+}
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.08);
+}
+
+/* -------- FILTROS HORIZONTALES -------- */
+#filtros {
+    display: flex;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+#filtros button {
+    min-width: 90px;
+    padding: 8px 16px;
+    font-size: 0.95rem;
+    border-radius: 10px;
+    border: none;
+    background: rgba(255,255,255,0.7);
+    color: #1f2937;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    transition: all 0.3s;
+}
+#filtros button.btn-warning {
+    background: #4f46e5;
+    color: #fff;
+}
+#filtros button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+}
+
+/* -------- TABLAS -------- */
+.table {
+    border-radius: 16px;
+    overflow: hidden;
+    background: rgba(255,255,255,0.65);
+    backdrop-filter: blur(10px);
+    box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+    border: 1px solid rgba(0,0,0,0.05);
+}
+.table thead th {
+    background: rgba(79,70,229,0.9);
+    color: #fff;
+    font-weight: 600;
+    text-align: center;
+    vertical-align: middle;
+}
+.table tbody td {
+    vertical-align: middle;
+    padding: 14px;
+    transition: background 0.2s;
+}
+.table tbody tr:hover td {
+    background: rgba(79,70,229,0.05);
+}
+
+/* -------- DETALLES -------- */
+.detalle {
+    background: rgba(255,255,255,0.6);
+    border-top: 1px solid rgba(0,0,0,0.05);
+    backdrop-filter: blur(8px);
+}
+.detalle textarea {
+    border-radius: 12px;
+    border: 1px solid rgba(0,0,0,0.1);
+    padding: 10px;
+    min-height: 90px;
+    box-shadow: inset 0 2px 6px rgba(0,0,0,0.05);
+    transition: all 0.3s;
+}
+.detalle textarea:focus {
+    border-color: #4f46e5;
+    box-shadow: 0 0 8px rgba(79,70,229,0.2);
+    outline: none;
+}
+
+/* -------- RESULTADOS BÚSQUEDA -------- */
+.resultados-busqueda {
+    display: grid;
+    grid-template-columns: repeat(auto-fit,minmax(280px,1fr));
+    gap: 18px;
+}
+.resultado-bloque {
+    background: rgba(255,255,255,0.65);
+    backdrop-filter: blur(10px);
+    border-radius: 16px;
+    padding: 18px 22px;
+    box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+    transition: transform 0.3s, box-shadow 0.3s;
+}
+.resultado-bloque:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 20px 40px rgba(0,0,0,0.12);
+}
+.resultado-bloque div {
+    margin-bottom: 6px;
+    font-size: 0.95rem;
+}
+
+/* -------- ICONOS ELIMINAR -------- */
+.btn-delete button {
+    border-radius: 10px;
+    padding: 4px 8px;
+    font-size: 0.85rem;
+}
+
+/* -------- RESPONSIVE -------- */
+@media (max-width: 768px) {
+    #filtros {
+        justify-content: center;
+    }
+    .resultado-bloque {
+        padding: 14px;
+    }
+    .login-box {
+        width: 90%;
+    }
+    #buscador {
+        max-width: 100%;
+    }
+}
+
+
+
+
+
+.panel-admin{
+position:fixed;
+top:50%;
+left:50%;
+transform:translate(-50%,-50%);
+background:white;
+padding:25px;
+border-radius:10px;
+box-shadow:0 0 20px rgba(0,0,0,0.3);
+width:400px;
+display:none;
+z-index:1000;
+}
+
+.panel-admin h2{
+text-align:center;
+margin-bottom:20px;
+}
+
+.crear-usuario{
+display:flex;
+gap:5px;
+margin-bottom:15px;
+}
+
+.tabla-usuarios{
+width:100%;
+border-collapse:collapse;
+}
+
+.tabla-usuarios th,
+.tabla-usuarios td{
+border:1px solid #ddd;
+padding:8px;
+text-align:center;
+}
+
+.tabla-usuarios th{
+background:#f5f5f5;
+}
+
+.panel-admin button{
+padding:6px 10px;
+cursor:pointer;
+}
+</style>
+
+<script>
+    
+  self.addEventListener("install", e => {
+  e.waitUntil(
+    caches.open("app-cache").then(cache => {
+      return cache.addAll([
+        "/",
+        "/index.html"
+      ])
+    })
+  )
+})  
+    
+   if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("service-worker.js");
+} 
+    
+</script>
